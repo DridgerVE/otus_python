@@ -13,12 +13,12 @@ import json
 import sys
 
 
-config = {
-    "REPORT_SIZE": 1000,
-    "REPORT_DIR": "./reports",
-    "LOG_DIR": "./log",
-    "TEMPLATE": "./reports/report.html"
-}
+# config = {
+#     "REPORT_SIZE": 1000,
+#     "REPORT_DIR": "./reports",
+#     "LOG_DIR": "./log",
+#     "TEMPLATE": "./reports/report.html"
+# }
 
 
 def get_last_log_file():
@@ -42,8 +42,7 @@ def get_last_log_file():
 
 def get_open_func(filename):
     """Get open func depend on ext file"""
-    name, ext = os.path.splitext(filename)
-    if ext == '.gz':
+    if filename.endswith(".gz"):
         return gzip.open
     else:
         return open
@@ -62,29 +61,36 @@ def make_report_name(log_filename, report_format='html'):
         return None
 
 
+def gen_readlog(filename):
+    """Generator for read log"""
+    open_func = get_open_func(filename)
+    log = open_func(filename, 'r')
+    for line in log:
+        yield line
+    log.close()
+
+
 def parse_log(filename):
     """Parse log, fill dict {url->list(...)}"""
     urls = {}
     total_count = 0
     total_time = 0
-    open_func = get_open_func(filename)
-    with open_func(filename, 'r') as log:
-        for line in log:
-            line = line.decode('utf-8').strip()
-            # parse url and access time
-            pos = line.find("]")
-            line = line[pos+1:]
-            pos = line.find("\"")
-            line = line[pos+1:]
-            pos = line.find("/")
-            line = line[pos:].split()
-            url, acstime = line[0], float(line[-1])
-            total_count += 1
-            total_time += acstime
-            if url not in urls:
-                urls[url] = [acstime]
-            else:
-                urls[url].append(acstime)
+    for line in gen_readlog(filename):
+        line = line.decode('utf-8').strip()
+        # parse url and access time
+        pos = line.find("]")
+        line = line[pos+1:]
+        pos = line.find("\"")
+        line = line[pos+1:]
+        pos = line.find("/")
+        line = line[pos:].split()
+        url, acstime = line[0], float(line[-1])
+        total_count += 1
+        total_time += acstime
+        if url not in urls:
+            urls[url] = [acstime]
+        else:
+            urls[url].append(acstime)
     return total_count, total_time, urls
 
 
@@ -98,7 +104,7 @@ def median(values):
 
 
 def process_data(data):
-    """Process data."""
+    """Process data"""
     count_digits = 3
     total_count, total_time, urls = data
     result = []
@@ -126,21 +132,52 @@ def process_data(data):
 
 def save_report(filename, data):
     """Save report"""
-    with open(config['TEMPLATE'], 'r') as tmpl:
-        with open(filename, 'w') as rpt:
-            for line in tmpl:
-                if "$table_json" in line:
-                    rpt.write(line.replace("$table_json", json.dumps(data)))
-                else:
-                    rpt.write(line)
+    tmpl = open(config['TEMPLATE'], 'r')
+    rpt = open(filename, 'w')
+    for line in tmpl:
+        if "$table_json" in line:
+            rpt.write(line.replace("$table_json", json.dumps(data)))
+        else:
+            rpt.write(line)
+    rpt.close()
+    tmpl.close()
+
+
+def read_config(filename):
+    conf = open(filename, 'r')
+    result = {}
+    for line in conf:
+        tmp = line.split(':')
+        result[tmp[0]] = tmp[1].strip()
+    conf.close()
+    if "REPORT_SIZE" in result:
+        result["REPORT_SIZE"] = int(result["REPORT_SIZE"])
+    return result
 
 
 def main(log, report):
+    """python log_analyzer.py --config filename.conf"""
     data = parse_log(log)
     result = process_data(data)
     save_report(report, result)
 
 if __name__ == "__main__":
+    # default log
+    conf_file = "log_analyzer.conf"
+    if len(sys.argv) == 3:
+        if sys.argv[1] == "--config":
+            conf_file = sys.argv[2]
+
+    # Conf file not found
+    if not os.path.isfile(conf_file):
+        sys.stderr.write('Can\'t find conf file {0}.\n'.format(conf_file))
+        sys.stderr.flush()
+        sys.exit(1)
+
+    config = read_config(conf_file)
+    if "TEMPLATE" not in config:
+        config["TEMPLATE"] = "./reports/report.html"
+
     last_log = get_last_log_file()
     report_filename = make_report_name(last_log)
 

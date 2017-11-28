@@ -68,7 +68,10 @@ def n_ary(func):
     '''
 
     def wrapper(*args):
-        res = reduce(func, args)
+        if len(args) == 1:
+            return args[0]
+        else:
+            res = func(args[0], wrapper(*args[1:]))
         return res
     return wrapper
 
