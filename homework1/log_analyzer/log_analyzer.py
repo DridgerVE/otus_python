@@ -11,7 +11,8 @@ import os
 import gzip
 import json
 import sys
-
+import logging
+import  datetime
 
 # config = {
 #     "REPORT_SIZE": 1000,
@@ -126,6 +127,8 @@ def process_data(data):
             "time_perc": time_perc,
             "time_sum": time_sum,
         })
+    result.sort(key=lambda f: f['time_avg'], reverse=True)
+    result = result[:config["REPORT_SIZE"]]
     result.sort(key=lambda f: f['time_sum'], reverse=True)
     return result
 
@@ -170,27 +173,39 @@ if __name__ == "__main__":
 
     # Conf file not found
     if not os.path.isfile(conf_file):
-        sys.stderr.write('Can\'t find conf file {0}.\n'.format(conf_file))
-        sys.stderr.flush()
+        logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
+                            level=logging.INFO)
+        logging.error('Can\'t find conf file {0}'.format(conf_file))
         sys.exit(1)
 
     config = read_config(conf_file)
+    if "LOG_FILE" in config:
+        logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
+                            level=logging.INFO, filename=config["LOG_FILE"])
     if "TEMPLATE" not in config:
         config["TEMPLATE"] = "./reports/report.html"
 
+    logging.info("log_analyzer is started")
     last_log = get_last_log_file()
     report_filename = make_report_name(last_log)
 
     # can't find date in log filename
     if not report_filename:
-        sys.stderr.write('Can\'t find date in {0} filename.\n'.format(last_log))
-        sys.stderr.flush()
+        logging.error('Can\'t find date in {0} filename'.format(last_log))
         sys.exit(1)
 
     # report already exists
     if os.path.isfile(report_filename):
-        sys.stderr.write('Report {0} already exist.\n'.format(report_filename))
-        sys.stderr.flush()
+        logging.error('Report {0} already exist'.format(report_filename))
         sys.exit(1)
-
-    main(last_log, report_filename)
+    try:
+        main(last_log, report_filename)
+        logging.info("log_analyzer is finished")
+        if "TS_FILE" in config:
+            ts = open(config["TS_FILE"], 'w')
+            ts.write(str(datetime.datetime.now().timestamp()))
+            ts.close()
+    except Exception:
+        logging.exception("Run-time error", exc_info=True)
+        sys.exit(1)
+        
