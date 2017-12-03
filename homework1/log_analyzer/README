@@ -1,0 +1,61 @@
+Документация для log_analyzer.py
+
+Запуск:
+    1. С дефолтным конфигом "python3 log_analyzer.py"
+    2. С переопределенным конфигом "python3 log_analyzer.py --config filename"
+        В случае отсутутсвия отдельных параметров, они будут дефолтными
+        Чтение конфига read_config(filename)
+
+Поиск последнего лога в директории config["LOG_DIR"]
+    log = get_last_log_file()
+    Возвращает namedtuple("fullname", "data")
+
+Построение имени файла для отчета в директории config["REPORT_DIR"]
+    report = make_report_name(log)
+
+Генератор для чтения лога построчно
+    gen_readlog(filename)
+
+Парсер данных лога
+    data = parse_log(filename)
+    возвращает кортеж (total_count, total_time, urls)
+    urls - словарь: urls[url] = [acstime]
+
+Обработа распарсенных данных лога
+    result = process_data(data)
+    Возвращает спсиок словарей
+    {
+            "url": url,
+            "count": count,
+            "count_perc": count_perc,
+            "time_avg": time_avg,
+            "time_max": time_max,
+            "time_med": time_med,
+            "time_perc": time_perc,
+            "time_sum": time_sum,
+    }
+
+Вычисление медианы в упорядоченном списке
+    median(values)
+
+Сохранение данных
+    save_report(report, result)
+    Открывается шаблон config["TEMPLATE"]
+    "$tabel_json" заменятеся на json.dumps(result) и сохраняется в report
+
+
+test_log_analyzer.py - тестирование с помощью библиотеки unittest
+Директория с логами переопределена config["LOG_DIR"] = "./test_log"
+Кейсы:
+    1. test_median(self):
+        """test log_analyzer.median"""
+    2. test_get_last_log_file(self):
+        """test log_analyzer.get_last_log"""
+    3. test_make_report_name(self):
+        """test log_analyzer.make_report_name"""
+    4. test_get_log_make_report(self):
+        """test log_analyzer.get_last_log and log_analyzer.make_report_name together"""
+    5. test_parse_log(self):
+        """test log_analyzer.parce_log"""
+    6. test_process_data(self):
+        """test log_analyzer.process_data"""

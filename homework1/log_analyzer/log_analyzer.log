@@ -1,23 +1,2 @@
-
-[2017.11.29 09:54:57] I log_analyzer is started
-[2017.11.29 09:55:35] I log_analyzer is finished
-[2017.11.29 09:56:25] I log_analyzer is started
-[2017.11.29 09:57:04] I log_analyzer is finished
-[2017.11.29 21:29:46] I log_analyzer is started
-[2017.11.29 21:29:46] E Report ./reports/report-2017.07.30.html already exist
-[2017.11.29 21:30:35] I log_analyzer is started
-[2017.11.29 21:31:14] I log_analyzer is finished
-[2017.11.29 21:31:14] E Run-time error
-Traceback (most recent call last):
-  File "/Users/DridgerVE/Documents/projects/otus_python/homework1/log_analyzer/log_analyzer.py", line 206, in <module>
-    ts.write(datetime.datetime.timestamp())
-TypeError: descriptor 'timestamp' of 'datetime.datetime' object needs an argument
-[2017.11.29 21:33:58] I log_analyzer is started
-[2017.11.29 21:34:32] I log_analyzer is finished
-[2017.11.29 21:34:32] E Run-time error
-Traceback (most recent call last):
-  File "/Users/DridgerVE/Documents/projects/otus_python/homework1/log_analyzer/log_analyzer.py", line 206, in <module>
-    ts.write(datetime.datetime.now().timestamp())
-TypeError: write() argument must be str, not float
-[2017.11.29 21:35:29] I log_analyzer is started
-[2017.11.29 21:36:16] I log_analyzer is finished
+[2017.12.03 22:24:33] I log_analyzer is started
+[2017.12.03 22:24:55] I log_analyzer is finished

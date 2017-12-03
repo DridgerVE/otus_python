@@ -12,62 +12,48 @@ import gzip
 import json
 import sys
 import logging
-import  datetime
+import datetime
+from collections import namedtuple
+import argparse
+import glob
 
-# config = {
-#     "REPORT_SIZE": 1000,
-#     "REPORT_DIR": "./reports",
-#     "LOG_DIR": "./log",
-#     "TEMPLATE": "./reports/report.html"
-# }
+config = {
+    "REPORT_SIZE": 1000,
+    "REPORT_DIR": "./reports",
+    "LOG_DIR": "./log",
+    "TEMPLATE": "./reports/report.html",
+    "LOG_FILE": "log_analyzer.log",
+    "TS_FILE": "log_analyzer.ts"
+}
 
 
 def get_last_log_file():
     """Find last logfile"""
     last_files = []
-    for root, dirs, files in os.walk(config["LOG_DIR"]):
-        for name in files:
-            fullname = os.path.join(root, name)
-            if "nginx" in name and "access" in name and "log" in name:
-                # find last symbol '-'
-                pos = name.rfind("-")
-                if pos == -1:
-                    return None
-                dt = int(name[pos+1:pos+9])
-                last_files.append({"fullname": fullname, "date": dt})
-    if last_files == []:
+    files_dt = namedtuple("files_dt", "fullname date")
+    for fullname in glob.glob(os.path.join(config["LOG_DIR"], "nginx-access-ui.log-*")):
+        if os.path.isfile(fullname):
+            pos = fullname.rfind("-")
+            dt = int(fullname[pos+1:pos+9])
+            file_dt = files_dt(fullname, dt)
+            last_files.append(file_dt)
+    if not last_files:
         return None
-    last_file = max(last_files, key=lambda f: f["date"])
-    return last_file["fullname"]
+    last_file = max(last_files, key=lambda f: f.date)
+    return last_file
 
 
-def get_open_func(filename):
-    """Get open func depend on ext file"""
-    if filename.endswith(".gz"):
-        return gzip.open
-    else:
-        return open
-
-
-def make_report_name(log_filename, report_format='html'):
+def make_report_name(log_lastfile, report_format='html'):
     """Make report name"""
-    pos = log_filename.rfind("-")
-    if pos == -1:
-        return None
-    try:
-        dt = [log_filename[pos + 1:pos + 5], log_filename[pos + 5:pos + 7], log_filename[pos + 7:pos + 9]]
-        report_name = 'report-{0}.{1}.{2}.{3}'.format(dt[0],  dt[1], dt[2], report_format)
-        return os.path.join(config['REPORT_DIR'], report_name)
-    except Exception:
-        return None
+    date = datetime.datetime.strptime(str(log_lastfile.date), "%Y%m%d")
+    return os.path.join(config['REPORT_DIR'], date.strftime("report-%Y.%m.%d.") + report_format)
 
 
 def gen_readlog(filename):
     """Generator for read log"""
-    open_func = get_open_func(filename)
-    log = open_func(filename, 'r')
+    log = gzip.open(filename, 'r') if filename.endswith(".gz") else open(filename, 'r')
     for line in log:
-        yield line
+        yield str(line.strip())
     log.close()
 
 
@@ -77,7 +63,7 @@ def parse_log(filename):
     total_count = 0
     total_time = 0
     for line in gen_readlog(filename):
-        line = line.decode('utf-8').strip()
+        line = line.strip()
         # parse url and access time
         pos = line.find("]")
         line = line[pos+1:]
@@ -96,7 +82,7 @@ def parse_log(filename):
 
 
 def median(values):
-    """Compute median"""
+    """Compute median for sorted list"""
     if len(values) % 2 == 0:
         return (values[(len(values) // 2) - 1] + values[len(values) // 2]) / 2.0
 
@@ -128,7 +114,8 @@ def process_data(data):
             "time_sum": time_sum,
         })
     result.sort(key=lambda f: f['time_avg'], reverse=True)
-    result = result[:config["REPORT_SIZE"]]
+    if len(result) > config["REPORT_SIZE"]:
+        result = result[:config["REPORT_SIZE"]]
     result.sort(key=lambda f: f['time_sum'], reverse=True)
     return result
 
@@ -147,65 +134,52 @@ def save_report(filename, data):
 
 
 def read_config(filename):
+    """Read config"""
     conf = open(filename, 'r')
-    result = {}
+    global config
     for line in conf:
         tmp = line.split(':')
-        result[tmp[0]] = tmp[1].strip()
+        config[tmp[0]] = tmp[1].strip()
     conf.close()
-    if "REPORT_SIZE" in result:
-        result["REPORT_SIZE"] = int(result["REPORT_SIZE"])
-    return result
+    if "REPORT_SIZE" in config:
+        config["REPORT_SIZE"] = int(config["REPORT_SIZE"])
+    return None
 
 
-def main(log, report):
+def main():
     """python log_analyzer.py --config filename.conf"""
-    data = parse_log(log)
+    log = get_last_log_file()
+    report = make_report_name(log)
+    data = parse_log(log.fullname)
     result = process_data(data)
     save_report(report, result)
 
 if __name__ == "__main__":
-    # default log
-    conf_file = "log_analyzer.conf"
-    if len(sys.argv) == 3:
-        if sys.argv[1] == "--config":
-            conf_file = sys.argv[2]
+    # parsing arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", dest="conf", type=str)
+    args = parser.parse_args()
+    conf_file = args.conf
+    if conf_file is None:
+        conf_file = "log_analyzer.conf"
 
     # Conf file not found
-    if not os.path.isfile(conf_file):
-        logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
-                            level=logging.INFO)
-        logging.error('Can\'t find conf file {0}'.format(conf_file))
-        sys.exit(1)
-
-    config = read_config(conf_file)
-    if "LOG_FILE" in config:
+    if os.path.isfile(conf_file):
+        read_config(conf_file)
         logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
                             level=logging.INFO, filename=config["LOG_FILE"])
-    if "TEMPLATE" not in config:
-        config["TEMPLATE"] = "./reports/report.html"
+    else:
+        logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
+                            level=logging.INFO, filename=config["LOG_FILE"])
+        logging.info('Can\'t find conf file \'{0}\'. Using default config'.format(conf_file))
 
-    logging.info("log_analyzer is started")
-    last_log = get_last_log_file()
-    report_filename = make_report_name(last_log)
-
-    # can't find date in log filename
-    if not report_filename:
-        logging.error('Can\'t find date in {0} filename'.format(last_log))
-        sys.exit(1)
-
-    # report already exists
-    if os.path.isfile(report_filename):
-        logging.error('Report {0} already exist'.format(report_filename))
-        sys.exit(1)
     try:
-        main(last_log, report_filename)
+        logging.info("log_analyzer is started")
+        main()
         logging.info("log_analyzer is finished")
-        if "TS_FILE" in config:
-            ts = open(config["TS_FILE"], 'w')
-            ts.write(str(datetime.datetime.now().timestamp()))
-            ts.close()
+        ts = open(config["TS_FILE"], 'w')
+        ts.write(str(datetime.datetime.now().timestamp()))
+        ts.close()
     except Exception:
         logging.exception("Run-time error", exc_info=True)
         sys.exit(1)
-        
