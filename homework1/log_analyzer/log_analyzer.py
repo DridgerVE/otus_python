@@ -53,7 +53,7 @@ def gen_readlog(filename):
     """Generator for read log"""
     log = gzip.open(filename, 'r') if filename.endswith(".gz") else open(filename, 'r')
     for line in log:
-        yield str(line.strip())
+        yield line.strip()
     log.close()
 
 
