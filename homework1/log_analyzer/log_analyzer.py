@@ -51,9 +51,9 @@ def make_report_name(log_lastfile, report_format='html'):
 
 def gen_readlog(filename):
     """Generator for read log"""
-    log = gzip.open(filename, 'r') if filename.endswith(".gz") else open(filename, 'r')
+    log = gzip.open(filename, 'rb') if filename.endswith(".gz") else open(filename, 'rb')
     for line in log:
-        yield line.strip()
+        yield line.strip().decode('utf-8')
     log.close()
 
 
@@ -122,64 +122,67 @@ def process_data(data):
 
 def save_report(filename, data):
     """Save report"""
-    tmpl = open(config['TEMPLATE'], 'r')
-    rpt = open(filename, 'w')
-    for line in tmpl:
-        if "$table_json" in line:
-            rpt.write(line.replace("$table_json", json.dumps(data)))
-        else:
-            rpt.write(line)
-    rpt.close()
-    tmpl.close()
+    with open(config['TEMPLATE'], 'r') as tmpl:
+        with open(filename, 'w') as rpt:
+            for line in tmpl:
+                if "$table_json" in line:
+                    rpt.write(line.replace("$table_json", json.dumps(data)))
+                else:
+                    rpt.write(line)
 
 
 def read_config(filename):
     """Read config"""
-    conf = open(filename, 'r')
-    global config
-    for line in conf:
-        tmp = line.split(':')
-        config[tmp[0]] = tmp[1].strip()
-    conf.close()
-    if "REPORT_SIZE" in config:
-        config["REPORT_SIZE"] = int(config["REPORT_SIZE"])
-    return None
+    with open(filename, 'r') as conf:
+        result = {}
+        for line in conf:
+            tmp = line.split(':')
+            result[tmp[0]] = tmp[1].strip()
+        if "REPORT_SIZE" in result:
+            result["REPORT_SIZE"] = int(result["REPORT_SIZE"])
+    return result
 
 
 def main():
     """python log_analyzer.py --config filename.conf"""
+    logging.info("Find last log")
     log = get_last_log_file()
+    logging.info("Make report filename")
     report = make_report_name(log)
-    data = parse_log(log.fullname)
-    result = process_data(data)
-    save_report(report, result)
-
-if __name__ == "__main__":
-    # parsing arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", dest="conf", type=str)
-    args = parser.parse_args()
-    conf_file = args.conf
-    if conf_file is None:
-        conf_file = "log_analyzer.conf"
-
-    # Conf file not found
-    if os.path.isfile(conf_file):
-        read_config(conf_file)
-        logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
-                            level=logging.INFO, filename=config["LOG_FILE"])
+    if os.path.exists(report):
+        logging.info('Report already exists \'{0}\'.'.format(report))
     else:
-        logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
-                            level=logging.INFO, filename=config["LOG_FILE"])
-        logging.info('Can\'t find conf file \'{0}\'. Using default config'.format(conf_file))
-
-    try:
-        logging.info("log_analyzer is started")
-        main()
+        logging.info("Parse log")
+        data = parse_log(log.fullname)
+        logging.info("Analyze start")
+        result = process_data(data)
+        logging.info("Save report")
+        save_report(report, result)
         logging.info("log_analyzer is finished")
         ts = open(config["TS_FILE"], 'w')
         ts.write(str(datetime.datetime.now().timestamp()))
         ts.close()
-    except Exception:
+
+if __name__ == "__main__":
+    # parsing arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", dest="conf", type=str, default="log_analyzer.conf")
+    args = parser.parse_args()
+    conf_file = args.conf
+
+    # Conf file not found or no parse
+    try:
+        config = read_config(conf_file)
+    except:
+        logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
+                            level=logging.INFO)
+        logging.error('Can\'t parse conf file \'{0}\'.'.format(conf_file))
+        sys.exit(1)
+
+    logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
+                        level=logging.INFO, filename=config["LOG_FILE"])
+    try:
+        main()
+    except:
         logging.exception("Run-time error", exc_info=True)
         sys.exit(1)
