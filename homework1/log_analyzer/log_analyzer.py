@@ -13,9 +13,10 @@ import json
 import sys
 import logging
 import datetime
-from collections import namedtuple
 import argparse
 import glob
+from collections import namedtuple
+from string import Template
 
 config = {
     "REPORT_SIZE": 1000,
@@ -27,11 +28,11 @@ config = {
 }
 
 
-def get_last_log_file():
+def get_last_log_file(cfg):
     """Find last logfile"""
     last_files = []
     files_dt = namedtuple("files_dt", "fullname date")
-    for fullname in glob.glob(os.path.join(config["LOG_DIR"], "nginx-access-ui.log-*")):
+    for fullname in glob.glob(os.path.join(cfg["LOG_DIR"], "nginx-access-ui.log-*")):
         if os.path.isfile(fullname):
             pos = fullname.rfind("-")
             dt = int(fullname[pos+1:pos+9])
@@ -43,10 +44,10 @@ def get_last_log_file():
     return last_file
 
 
-def make_report_name(log_lastfile, report_format='html'):
+def make_report_name(log_lastfile, cfg, report_format='html'):
     """Make report name"""
     date = datetime.datetime.strptime(str(log_lastfile.date), "%Y%m%d")
-    return os.path.join(config['REPORT_DIR'], date.strftime("report-%Y.%m.%d.") + report_format)
+    return os.path.join(cfg["REPORT_DIR"], date.strftime("report-%Y.%m.%d.") + report_format)
 
 
 def gen_readlog(filename):
@@ -62,10 +63,17 @@ def parse_log(filename):
     urls = {}
     total_count = 0
     total_time = 0
+    num_line = 0
+    count_pass_line = 0
+    # method = ("OPTIONS", "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "TRACE", "CONNECT")
     for line in gen_readlog(filename):
-        line = line.strip()
-        # parse url and access time
+        if line == "":
+            continue
+        num_line += 1
         pos = line.find("]")
+        if pos == -1 or 'HTTP' not in line:
+            count_pass_line += 1
+            continue
         line = line[pos+1:]
         pos = line.find("\"")
         line = line[pos+1:]
@@ -78,6 +86,8 @@ def parse_log(filename):
             urls[url] = [acstime]
         else:
             urls[url].append(acstime)
+    if num_line == count_pass_line:
+        logging.error("Can't parse log {}".format(filename))
     return total_count, total_time, urls
 
 
@@ -90,7 +100,7 @@ def median(values):
         return values[int((len(values) // 2))]
 
 
-def process_data(data):
+def process_data(data, cfg):
     """Process data"""
     count_digits = 3
     total_count, total_time, urls = data
@@ -113,22 +123,20 @@ def process_data(data):
             "time_perc": time_perc,
             "time_sum": time_sum,
         })
-    result.sort(key=lambda f: f['time_avg'], reverse=True)
-    if len(result) > config["REPORT_SIZE"]:
-        result = result[:config["REPORT_SIZE"]]
     result.sort(key=lambda f: f['time_sum'], reverse=True)
-    return result
+    return result[:cfg["REPORT_SIZE"]]
 
 
 def save_report(filename, data):
     """Save report"""
+    if not data:
+        return None
     with open(config['TEMPLATE'], 'r') as tmpl:
-        with open(filename, 'w') as rpt:
-            for line in tmpl:
-                if "$table_json" in line:
-                    rpt.write(line.replace("$table_json", json.dumps(data)))
-                else:
-                    rpt.write(line)
+        lines = tmpl.read()
+    s = Template(lines)
+    s = s.safe_substitute(table_json=json.dumps(data))
+    with open(filename, 'w') as rpt:
+        rpt.write(s)
 
 
 def read_config(filename):
@@ -143,46 +151,38 @@ def read_config(filename):
     return result
 
 
-def main():
+def main(cfg):
     """python log_analyzer.py --config filename.conf"""
-    logging.info("Find last log")
-    log = get_last_log_file()
-    logging.info("Make report filename")
-    report = make_report_name(log)
+    log = get_last_log_file(cfg)
+    logging.info("Find last log: \'{}\'.".format(log.fullname))
+    report = make_report_name(log, cfg)
+    logging.info("Make report filename: \'{}\'.".format(report))
     if os.path.exists(report):
         logging.info('Report already exists \'{0}\'.'.format(report))
-    else:
-        logging.info("Parse log")
-        data = parse_log(log.fullname)
-        logging.info("Analyze start")
-        result = process_data(data)
-        logging.info("Save report")
-        save_report(report, result)
-        logging.info("log_analyzer is finished")
-        ts = open(config["TS_FILE"], 'w')
+        return 0
+    logging.info("Parse log")
+    data = parse_log(log.fullname)
+    logging.info("Analyze start")
+    result = process_data(data, cfg)
+    logging.info("Save report")
+    save_report(report, result)
+    logging.info("log_analyzer is finished")
+    with open(cfg["TS_FILE"], 'w') as ts:
         ts.write(str(datetime.datetime.now().timestamp()))
-        ts.close()
 
 if __name__ == "__main__":
     # parsing arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", dest="conf", type=str, default="log_analyzer.conf")
     args = parser.parse_args()
-    conf_file = args.conf
 
-    # Conf file not found or no parse
-    try:
-        config = read_config(conf_file)
-    except:
-        logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
-                            level=logging.INFO)
-        logging.error('Can\'t parse conf file \'{0}\'.'.format(conf_file))
-        sys.exit(1)
+    # parse config
+    config.update(read_config(args.conf))
 
     logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
                         level=logging.INFO, filename=config["LOG_FILE"])
     try:
-        main()
+        main(config)
     except:
-        logging.exception("Run-time error", exc_info=True)
+        logging.exception("Runtime error", exc_info=True)
         sys.exit(1)

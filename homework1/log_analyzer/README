@@ -4,14 +4,15 @@
     1. С дефолтным конфигом "python3 log_analyzer.py"
     2. С переопределенным конфигом "python3 log_analyzer.py --config filename"
         В случае отсутутсвия отдельных параметров, они будут дефолтными
-        Чтение конфига read_config(filename)
+        Чтение конфига read_config(filename), обновляем переменную config и передаем ее в main
+        Где необходимо передаем переменную config параметром в функции
 
 Поиск последнего лога в директории config["LOG_DIR"]
-    log = get_last_log_file()
+    log = get_last_log_file(config)
     Возвращает namedtuple("fullname", "data")
 
 Построение имени файла для отчета в директории config["REPORT_DIR"]
-    report = make_report_name(log)
+    report = make_report_name(log, config)
 
 Генератор для чтения лога построчно
     gen_readlog(filename)
@@ -22,7 +23,7 @@
     urls - словарь: urls[url] = [acstime]
 
 Обработа распарсенных данных лога
-    result = process_data(data)
+    result = process_data(data, config)
     Возвращает спсиок словарей
     {
             "url": url,
@@ -45,7 +46,6 @@
 
 
 test_log_analyzer.py - тестирование с помощью библиотеки unittest
-Директория с логами переопределена config["LOG_DIR"] = "./test_log"
 Кейсы:
     1. test_median(self):
         """test log_analyzer.median"""
