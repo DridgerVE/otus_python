@@ -9,7 +9,8 @@ config = {
     "LOG_DIR": "./test_log",
     "TEMPLATE": "./reports/report.html",
     "LOG_FILE": "log_analyzer.log",
-    "TS_FILE": "log_analyzer.ts"
+    "TS_FILE": "log_analyzer.ts",
+    "ERROR_TRESHOLD": 0.75
 }
 
 
@@ -42,7 +43,7 @@ class TestLogAnalyzer(unittest.TestCase):
     def test_parse_log(self):
         """test log_analyzer.parce_log"""
         last_log = la.get_last_log_file(config)
-        result = la.parse_log(last_log.fullname)
+        result = la.parse_log(last_log.fullname, config)
         self.assertEqual(result[0], 5)
         total_sum = 0
         for el in result[2]:
@@ -54,7 +55,7 @@ class TestLogAnalyzer(unittest.TestCase):
     def test_process_data(self):
         """test log_analyzer.process_data"""
         last_log = la.get_last_log_file(config)
-        data = la.parse_log(last_log.fullname)
+        data = la.parse_log(last_log.fullname, config)
         result = la.process_data(data, config)
         self.assertEqual(result[0]["count"], 2)
         self.assertEqual(result[0]["count_perc"], 40.000)
@@ -64,7 +65,7 @@ class TestLogAnalyzer(unittest.TestCase):
         self.assertEqual(result[0]["time_perc"], 60.000)
 
     def test_parse_log_with_error(self):
-        result = la.parse_log(os.path.join(config["LOG_DIR"], "nginx-access-ui.log-20170730"))
+        result = la.parse_log(os.path.join(config["LOG_DIR"], "nginx-access-ui.log-20170730"), config)
         total_sum = 0
         for el in result[2]:
             total_sum += sum(result[2][el])
@@ -74,11 +75,24 @@ class TestLogAnalyzer(unittest.TestCase):
         self.assertEqual(len(result[2]), 3)
 
     def test_parse_log_with_fatal_error(self):
-        result = la.parse_log(os.path.join(config["LOG_DIR"], "nginx-access-ui.log-20170630"))
-        self.assertEqual(result[0], 0)
-        self.assertEqual(result[1], 0)
-        self.assertEqual(len(result[2]), 0)
+        result = la.parse_log(os.path.join(config["LOG_DIR"], "nginx-access-ui.log-20170630"), config)
+        self.assertEqual(result, None)
 
+    def test_parse_log_without_request_time(self):
+        result = la.parse_log(os.path.join(config["LOG_DIR"], "nginx-access-ui.log-20170530"), config)
+        self.assertEqual(result, None)
+
+    def test_parse_log_with_error_treshold(self):
+        result = la.parse_log(os.path.join(config["LOG_DIR"], "nginx-access-ui.log-20170430"), config)
+        self.assertEqual(result, None)
+
+    def test_parse_log_with_bad_requests(self):
+        result = la.parse_log(os.path.join(config["LOG_DIR"], "nginx-access-ui.log-20170330"), config)
+        self.assertEqual(result, None)
+
+    def test_parse_log_without_uri(self):
+        result = la.parse_log(os.path.join(config["LOG_DIR"], "nginx-access-ui.log-20170230"), config)
+        self.assertEqual(result, None)
 
 if __name__ == '__main__':
     unittest.main()

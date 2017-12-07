@@ -24,7 +24,8 @@ config = {
     "LOG_DIR": "./log",
     "TEMPLATE": "./reports/report.html",
     "LOG_FILE": "log_analyzer.log",
-    "TS_FILE": "log_analyzer.ts"
+    "TS_FILE": "log_analyzer.ts",
+    "ERROR_TRESHOLD": 0.75
 }
 
 
@@ -34,8 +35,10 @@ def get_last_log_file(cfg):
     files_dt = namedtuple("files_dt", "fullname date")
     for fullname in glob.glob(os.path.join(cfg["LOG_DIR"], "nginx-access-ui.log-*")):
         if os.path.isfile(fullname):
-            pos = fullname.rfind("-")
-            dt = int(fullname[pos+1:pos+9])
+            fname = fullname.split("-")
+            if not fname[3][:8].isdigit():
+                return None
+            dt = int(fname[3][:8])
             file_dt = files_dt(fullname, dt)
             last_files.append(file_dt)
     if not last_files:
@@ -52,13 +55,14 @@ def make_report_name(log_lastfile, cfg, report_format='html'):
 
 def gen_readlog(filename):
     """Generator for read log"""
-    log = gzip.open(filename, 'rb') if filename.endswith(".gz") else open(filename, 'rb')
+    log = gzip.open(filename, mode='rt', encoding='utf-8') if filename.endswith(".gz") \
+        else open(filename, mode='r', encoding='utf-8')
     for line in log:
-        yield line.strip().decode('utf-8')
+        yield line.strip()
     log.close()
 
 
-def parse_log(filename):
+def parse_log(filename, cfg):
     """Parse log, fill dict {url->list(...)}"""
     urls = {}
     total_count = 0
@@ -70,24 +74,38 @@ def parse_log(filename):
         if line == "":
             continue
         num_line += 1
-        pos = line.find("]")
-        if pos == -1 or 'HTTP' not in line:
+        # pos = line.find("]")
+        line = line.split('"')
+        if len(line) < 2:
             count_pass_line += 1
             continue
-        line = line[pos+1:]
-        pos = line.find("\"")
-        line = line[pos+1:]
-        pos = line.find("/")
-        line = line[pos:].split()
-        url, acstime = line[0], float(line[-1])
+        # find HTTP in request
+        if 'HTTP' not in line[1]:
+            count_pass_line += 1
+            continue
+        # spliting request "method uri HTTP/version"
+        request = line[1].split()
+        if len(request) != 3:
+            count_pass_line += 1
+            continue
+        # find request_time
+        line = line[-1].split()
+        if not line:
+            count_pass_line += 1
+            continue
+        check_request_time = line[-1].replace('.', '')
+        if not check_request_time.isdigit():
+            count_pass_line += 1
+            continue
+        url, acstime = request[1], float(line[-1])
         total_count += 1
         total_time += acstime
         if url not in urls:
             urls[url] = [acstime]
         else:
             urls[url].append(acstime)
-    if num_line == count_pass_line:
-        logging.error("Can't parse log {}".format(filename))
+    if num_line > 0 and count_pass_line / num_line > cfg["ERROR_TRESHOLD"]:
+        return None
     return total_count, total_time, urls
 
 
@@ -148,20 +166,28 @@ def read_config(filename):
             result[tmp[0]] = tmp[1].strip()
         if "REPORT_SIZE" in result:
             result["REPORT_SIZE"] = int(result["REPORT_SIZE"])
+        if "ERROR_TRESHOLD" in result:
+            result["ERROR_TRESHOLD"] = float(result["ERROR_TRESHOLD"])
     return result
 
 
 def main(cfg):
     """python log_analyzer.py --config filename.conf"""
     log = get_last_log_file(cfg)
+    if log is None:
+        logging.error("Can't find last log")
+        return
     logging.info("Find last log: \'{}\'.".format(log.fullname))
     report = make_report_name(log, cfg)
     logging.info("Make report filename: \'{}\'.".format(report))
     if os.path.exists(report):
         logging.info('Report already exists \'{0}\'.'.format(report))
-        return 0
+        return
     logging.info("Parse log")
-    data = parse_log(log.fullname)
+    data = parse_log(log.fullname, cfg)
+    if data is None:
+        logging.error("Can't parse log {}".format(log.fullname))
+        sys.exit(1)
     logging.info("Analyze start")
     result = process_data(data, cfg)
     logging.info("Save report")
@@ -184,5 +210,5 @@ if __name__ == "__main__":
     try:
         main(config)
     except:
-        logging.exception("Runtime error", exc_info=True)
+        logging.exception("Runtime error:")
         sys.exit(1)
