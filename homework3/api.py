@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from abc import abstractmethod
+from abc import abstractmethod, ABCMeta
 import json
 import datetime
 import logging
@@ -38,7 +38,7 @@ GENDERS = {
 }
 
 
-class Field(object):
+class Field(object, metaclass=ABCMeta):
     """Базовый класс для всех остальных полей."""
 
     def __init__(self, required=False, nullable=False):
@@ -143,16 +143,33 @@ class ClientIDsField(Field):
         return value
 
 
-class MainRequest(object):
+class MetaRequest(type):
+    """Метакласс для запросов.
+    Данный метакласс будем применять ко всем запросам: MethodRequest, OnlineScoreRequest, ClientsInterestsRequest.
+    Перед созданием нового класса-запроса обходим все атрибуты, у которых базовый класс Field и
+    создаем словарь имя атрибута-класс поле. Сохраняем словарь в атрибуте rq_fields.
+    """
+
+    def __new__(cls, name, bases, dicts):
+        new_cls = super(MetaRequest, cls).__new__  # (cls, name, bases, dicts)
+        rq_fields = {}
+        for k, v in dicts.items():
+            if isinstance(v, Field):
+                rq_fields[k] = v
+        dicts['rq_fields'] = rq_fields
+        return new_cls(cls, name, bases, dicts)
+
+
+class MainRequest(object, metaclass=MetaRequest):
 
     def __init__(self, **kwargs):
         self.errors = []
         self.request = kwargs
         self.is_parsed = False
-        self.rq_fields = {el: getattr(self, el) for el in dir(self) if isinstance(getattr(self, el), Field)}
+        # self.rq_fields = {el: getattr(self, el) for el in dir(self) if isinstance(getattr(self, el), Field)}
 
     @abstractmethod
-    def processing(self, request, ctx):
+    def processing(self, request, ctx, store):
         raise NotImplementedError
 
     def validate_all(self):
@@ -187,12 +204,12 @@ class ClientsInterestsRequest(MainRequest):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
-    def processing(self, request, ctx):
+    def processing(self, request, ctx, store):
         """Обрабатываем метод clients_interests"""
         ctx['nclients'] = len(self.client_ids)
         response = {}
         for client in self.client_ids:
-            response[client] = get_interests(0, 0)
+            response[client] = get_interests(store, 0)
         return response, OK
 
 
@@ -223,12 +240,12 @@ class OnlineScoreRequest(MainRequest):
             return False
         return True
 
-    def processing(self, request, ctx):
+    def processing(self, request, ctx, store):
         """Обработка метода online_score"""
         ctx['has'] = self.get_fill_fields()
         if request.is_admin:
             return {'score': 42}, OK
-        return {'score': get_score(0, self.phone, self.email, self.birthday,
+        return {'score': get_score(store, self.phone, self.email, self.birthday,
                                    self.gender, self.first_name, self.last_name)}, OK
 
     def get_fill_fields(self):
@@ -239,6 +256,7 @@ class OnlineScoreRequest(MainRequest):
 
 
 class MethodRequest(MainRequest):
+
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
@@ -249,7 +267,7 @@ class MethodRequest(MainRequest):
     def is_admin(self):
         return self.login == ADMIN_LOGIN
 
-    def processing(self, request, ctx):
+    def processing(self, request, ctx, store):
         pass
 
 
@@ -321,7 +339,7 @@ def method_handler(request, ctx, store):
     if handler is None:
         return "Method Not Found", NOT_FOUND
     if handler.is_valid():
-        return handler.processing(request, ctx)
+        return handler.processing(request, ctx, store)
     else:
         return make_errors(INVALID_REQUEST, handler.errors)
 
