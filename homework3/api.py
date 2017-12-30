@@ -8,9 +8,11 @@ import logging
 import hashlib
 import uuid
 import collections
-import random
+# import random
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import redis
+import time
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -36,6 +38,47 @@ GENDERS = {
     MALE: "male",
     FEMALE: "female",
 }
+
+
+class MyRedis(redis.Redis):
+    """Обертка для redis"""
+
+    def __init__(self, max_count_attempt=0, timeout=0.1, *args, **kwargs):
+        """max_count_attempt - количество попыток переподключения (0 - пытаемся бесконечно)"""
+        super().__init__(*args, **kwargs)
+        self.max_count_attempt = max_count_attempt
+        self.timeout = timeout
+        self.count_attempt = 0
+
+    def cache_get(self, name):
+        while True:
+            try:
+                r = super().get(name)
+                self.count_attempt = 0
+                break
+            except redis.exceptions.ConnectionError:
+                if self.max_count_attempt == 0 or self.max_count_attempt >= self.count_attempt:
+                    self.count_attempt += 1
+                    time.sleep(self.timeout)
+                    continue
+                else:
+                    r = 0
+                    break
+        return r
+
+    def cache_set(self, name, value, ex=None, px=None, nx=False, xx=False):
+        while True:
+            try:
+                super().set(name, value, ex, px, nx, xx)
+                self.count_attempt = 0
+                break
+            except redis.exceptions.ConnectionError:
+                if self.max_count_attempt == 0 or self.max_count_attempt >= self.count_attempt:
+                    self.count_attempt += 1
+                    time.sleep(self.timeout)
+                    continue
+                else:
+                    break
 
 
 class Field(object, metaclass=ABCMeta):
@@ -209,7 +252,7 @@ class ClientsInterestsRequest(MainRequest):
         ctx['nclients'] = len(self.client_ids)
         response = {}
         for client in self.client_ids:
-            response[client] = get_interests(store, 0)
+            response[client] = get_interests(store, client)
         return response, OK
 
 
@@ -250,7 +293,7 @@ class OnlineScoreRequest(MainRequest):
 
     def get_fill_fields(self):
         """Получаем кортеж заполненных полей запроса"""
-        exist_fields = [name for name, field in self.rq_fields.items() if field is not None]
+        exist_fields = [name for name, field in self.rq_fields.items() if name in self.request]
         fill_fields = [name for name in exist_fields if getattr(self, name) not in ([], {}, '')]
         return fill_fields
 
@@ -290,7 +333,23 @@ class RequestApplication(Application):
 
 
 def get_score(store, phone, email, birthday=None, gender=None, first_name=None, last_name=None):
-    score = 0
+    if birthday is None:
+        key_parts = [
+            first_name or "",
+            last_name or "",
+            ]
+    else:
+        key_parts = [
+            first_name or "",
+            last_name or "",
+            birthday.strftime("%Y%m%d"),
+        ]
+    key = "uid:" + hashlib.md5("".join(key_parts).encode('utf-8')).hexdigest()
+    # try get from cache,
+    # fallback to heavy calculation in case of cache miss
+    score = store.cache_get(key) or 0
+    if score:
+        return float(score)
     if phone:
         score += 1.5
     if email:
@@ -299,12 +358,19 @@ def get_score(store, phone, email, birthday=None, gender=None, first_name=None, 
         score += 1.5
     if first_name and last_name:
         score += 0.5
+    # cache for 60 minutes
+    store.cache_set(key, score,  60 * 60)
     return score
 
 
 def get_interests(store, cid):
-    interests = ["cars", "pets", "travel", "hi-tech", "sport", "music", "books", "tv", "cinema", "geek", "otus"]
-    return random.sample(interests, 2)
+    r = store.get("i:%s" % cid)
+    return json.loads(r) if r else []
+
+
+# def get_interests(store, cid):
+#     interests = ["cars", "pets", "travel", "hi-tech", "sport", "music", "books", "tv", "cinema", "geek", "otus"]
+#     return random.sample(interests, 2)
 
 
 def check_auth(request):
@@ -329,12 +395,14 @@ def method_handler(request, ctx, store):
     if not isinstance(body, collections.Mapping):
         return None, INVALID_REQUEST
     request = MethodRequest(**body)
+    # print(body)
     if not request.is_valid():
         return make_errors(INVALID_REQUEST, request.errors)
     if not check_auth(request):
         return "Forbidden", FORBIDDEN
     app = RequestApplication()
     arguments = request.arguments
+    # print(arguments)
     handler = app.create_request(request.method, arguments)
     if handler is None:
         return "Method Not Found", NOT_FOUND
@@ -348,7 +416,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     router = {
         "method": method_handler
     }
-    store = None
+    store = MyRedis(max_count_attempt=10, timeout=0.01)
 
     def get_request_id(self, headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)

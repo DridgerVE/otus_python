@@ -99,3 +99,39 @@ API необычно тем, что пользователь дергают ме
 
 ```$ curl -X POST  -H "Content-Type: application/json" -d '{"account": "horns&hoofs", "login": "admin", "method": "clients_interests", "token": "d3573aff1555cd67dccf21b95fe8c4dc8732f33fd4e32461b7fe6a71d83c947688515e36774c00fb630b039fe2223c991f045f13f24091386050205c324687a0", "arguments": {"client_ids": [1,2,3,4], "date": "15.12.2017"}}' http://127.0.0.1:8080/method/```
 ```-> {"code": 403, "response": "Forbidden"}```
+
+
+**Использвание хранилища Redis**
+
+Redis поднят в докере
+
+```docker pull redis```
+
+```docker run -d --name redis -p 6379:6379 redis```
+
+Написан класс-обертка с методами cache_get, cache_set для организации передподключений в случае ошибок
+(параметры timeout, max_count_attempt передаются во время создания экземпляра класса)
+
+При тестировании можно использовать либо класс api.MyRedis(), либо класс MockMyRedis.
+
+При использовании Mock-класса или при функционирующем редисе все тесты проходят,
+при использовании MyRedis() в случае ошибок подключения test_ok_interests_request падает с ошибкой
+(get_interests при вызове store.get генерирует исключение)
+
+**Тестирование**
+
+1. test_empty_request
+
+2. test_bad_auth
+
+3. test_invalid_method_request
+
+4. test_invalid_score_request
+
+5. test_ok_score_request
+
+6. test_ok_score_admin_request
+
+7. test_invalid_interests_request
+
+8. test_ok_interests_request
