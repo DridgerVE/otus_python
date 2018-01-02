@@ -127,7 +127,7 @@ Percentage of the requests served within a certain time (ms)
  100%  20088 (longest request)
 ```
 
-*** Тестирование
+### Тестирование
 
 Тесты пришлось подкорректировать в связи с тем, что использую Python 3
 и методы socket.send, socket.sendall принимают данные только bytes,
