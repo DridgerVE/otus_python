@@ -43,7 +43,6 @@
 
 ### Необходимая литература
 
-* [Hypertext Transfer Protocol -- HTTP/1.0](https://tools.ietf.org/html/rfc1945)
 * [Hypertext Transfer Protocol -- HTTP/1.1](https://tools.ietf.org/html/rfc2616)
 
 ## Результаты
@@ -68,13 +67,14 @@ optional arguments:
 ```
 
 ### Тестовый стенд (сервер запущен с 1 потоком)
+Н
 
 ```MacBook Pro (2,4 GHz Intel Core i5, 8 ГБ 1333 MHz DDR3)```
 
 ```
 ab -n 50000 -c 100 -r -s 60 http://127.0.0.1:8080/
 ```
-
+Нагрузочная тестирование иногда ломается, даже чаще чем полностью проходит
 ```
 Benchmarking 127.0.0.1 (be patient)
 Completed 5000 requests
@@ -98,33 +98,33 @@ Document Path:          /
 Document Length:        138 bytes
 
 Concurrency Level:      100
-Time taken for tests:   136.442 seconds
+Time taken for tests:   106.241 seconds
 Complete requests:      50000
 Failed requests:        0
-Total transferred:      14300000 bytes
+Total transferred:      14750000 bytes
 HTML transferred:       6900000 bytes
-Requests per second:    484.79 [#/sec] (mean)
-Time per request:       206.273 [ms] (mean)
-Time per request:       2.063 [ms] (mean, across all concurrent requests)
-Transfer rate:          135.40 [Kbytes/sec] received
+Requests per second:    470.63 [#/sec] (mean)
+Time per request:       212.482 [ms] (mean)
+Time per request:       2.125 [ms] (mean, across all concurrent requests)
+Transfer rate:          135.58 [Kbytes/sec] received
 
 Connection Times (ms)
               min  mean[+/-sd] median   max
-Connect:        0  120 1537.3      0   20079
-Processing:     1   86  64.3     76     822
-Waiting:        0   86  64.1     76     822
-Total:          1  206 1535.2     77   20088
+Connect:        0   94 1320.3      0   20528
+Processing:     1  104  74.5     90     721
+Waiting:        1  104  74.4     90     720
+Total:          1  198 1322.8     90   20575
 
 Percentage of the requests served within a certain time (ms)
-  50%     77
-  66%     78
-  75%     79
-  80%     80
-  90%     83
-  95%     88
-  98%    411
-  99%    474
- 100%  20088 (longest request)
+  50%     90
+  66%     97
+  75%    104
+  80%    115
+  90%    155
+  95%    213
+  98%    451
+  99%    556
+ 100%  20575 (longest request)
 ```
 
 ### Тестирование

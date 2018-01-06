@@ -1,108 +1,256 @@
 #!/usr/bin/env python
 import argparse
-import os
 import logging
+import os
+import queue
 import socket
 import threading
-import queue
-import request
+from urllib.parse import unquote
+from datetime import datetime
+
+# supported status codes
+OK = 200
+BAD_REQUEST = 400
+FORBIDDEN = 403
+NOT_FOUND = 404
+NOT_ALLOWED = 405
+
+STATUS_CODES = {
+    OK: 'OK',
+    FORBIDDEN: 'Forbidden',
+    BAD_REQUEST: 'Bad Request',
+    NOT_FOUND: 'Not Found',
+    NOT_ALLOWED: 'Method Not Allowed'
+}
+
+# supported content types
+CONTENT_TYPE = {
+    'text': 'text/plain',
+    'html': 'text/html',
+    'css': 'text/css',
+    'js': 'application/javascript',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'gif': 'image/gif',
+    'swf': 'application/x-shockwave-flash'
+}
 
 
-class HTTPd(threading.Thread):
+class HTTPProtocol(object):
+
+    def __init__(self, data, doc_root):
+        self.data = data
+        self.allowed_method = {'HEAD', 'GET'}
+        self.version = "HTTP/1.1"
+        self.method = ""
+        self.url = ""
+        self.filename = ""
+        self.doc_root = doc_root
+        self.headers = dict()
+        self.response = None
+        self.code = OK
+        self.body = None
+
+    def _invalid_request(self, code, msg):
+        """Invalid request"""
+        self.code = code
+        self.body = str(msg)
+        self.headers = {'Content-Type': 'text/plain'}
+
+    def _get_content_type(self):
+        name, ext = os.path.splitext(self.filename)
+        if ext:
+            return CONTENT_TYPE.get(ext.strip('.'), CONTENT_TYPE['text'])
+        return CONTENT_TYPE['text']
+
+    def _read_file(self):
+        """Reading file in binary mode"""
+        with open(self.filename, mode='rb') as fd:
+            return fd.read()
+
+    def _check(self):
+        """Check resource for access"""
+        file_path = unquote(self.url.split('?')[0].strip('/'))
+        filename = os.path.realpath(os.path.join(self.doc_root, file_path))
+        long_prefix = os.path.commonprefix([self.doc_root, filename])
+        # check root
+        if long_prefix != self.doc_root:
+            return FORBIDDEN
+        if os.path.isdir(filename):
+            # append index.html
+            filename = os.path.join(filename, "index.html")
+            error = FORBIDDEN
+        else:
+            error = NOT_FOUND
+        if not os.path.exists(filename):
+            return error
+        self.filename = filename
+        return OK
+
+    def _write_data(self, string):
+        """Function to write data into response"""
+        if isinstance(string, str):
+            if self.response is None:
+                self.response = string.encode('utf-8')
+            else:
+                self.response += string.encode('utf-8')
+        else:
+            if self.response is None:
+                self.response = string
+            else:
+                self.response += string
+
+    def write_response(self):
+        """Write the response back to the client """
+        # status line
+        status = '{} {} {}\r\n'.format(self.version,
+                                       self.code,
+                                       STATUS_CODES[self.code])
+        logging.debug("Responding status: {0}".format(status.strip()))
+        self._write_data(status)
+        if self.body is None or self.method not in self.allowed_method:
+            self.headers['Content-Length'] = 0
+        else:
+            self.headers['Content-Length'] = len(self.body)
+            self.headers['Content-type'] = self._get_content_type()
+
+        self.headers['Date'] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+        self.headers['Connection'] = 'close'
+        self.headers['Server'] = 'Python Simple Web Server'
+        # headers
+        # for (header, content) in self.headers.items():
+        #     logging.debug("Sending header: '{0}: {1}'".format(header, content))
+        #     self._write_data('{}: {}\r\n'.format(header, content))
+        headers = (self._write_data('{}: {}\r\n'.format(header, content))
+                   for (header, content) in self.headers.items())
+        for el in headers:
+            pass
+        self._write_data('\r\n')
+        # body
+        if self.body is not None and self.method == "GET":
+            self._write_data(self.body)
+
+    def parse_data(self):
+        logging.debug('Parsing headers')
+        if not self.data:
+            logging.info('Invalid http header')
+            self._invalid_request(BAD_REQUEST, STATUS_CODES[BAD_REQUEST])
+            return
+        request_strings = self.data.splitlines()
+        method_line = request_strings[0].split()
+        if len(method_line) != 3:
+            logging.info('Invalid http header')
+            self._invalid_request(BAD_REQUEST, STATUS_CODES[BAD_REQUEST])
+            return
+        # method
+        self.method = method_line[0]
+        # URL
+        self.url = method_line[1]
+        if self.method not in self.allowed_method:
+            self._invalid_request(NOT_ALLOWED, STATUS_CODES[NOT_ALLOWED])
+            return
+        self.code = self._check()
+        if self.code != OK:
+            self._invalid_request(self.code, STATUS_CODES[self.code])
+            return
+        self.body = self._read_file()
+
+
+class TCPWorker(threading.Thread):
+
+    def __init__(self, doc_root, q, q_timeout, **kwargs):
+        super().__init__(**kwargs)
+        self.doc_root = doc_root
+        self.queue = q
+        self.timeout = q_timeout
+        self._stopped = False
+        self.httpobj = None
+
+    def _do_work(self, conn):
+        """Processing: get request and send response"""
+        RECV_BUF = 1024
+        data = conn.recv(RECV_BUF).decode('utf-8')
+        if data:
+            self.httpobj = HTTPProtocol(data, self.doc_root)
+            self.httpobj.parse_data()
+            self.httpobj.write_response()
+            logging.info('{} {} {}'.format(self.httpobj.url, self.httpobj.code, len(self.httpobj.response)))
+            conn.sendall(self.httpobj.response)
+            self.httpobj = None
+
+    def run(self):
+        """Main loop for thread, trying queue.get and _do_work"""
+        while not self._stopped:
+            try:
+                item = self.queue.get(block=True, timeout=self.timeout)
+                # if item is None:
+                #     continue
+                self._do_work(item)
+                item.close()
+                self.queue.task_done()
+            except queue.Empty:
+                continue
+
+    def stop(self):
+        self._stopped = True
+
+
+class TCPServer(object):
     """Python Web Server"""
 
-    def __init__(self, host, port, doc_root, workers_count, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, host, port, doc_root, cnt_threads):
         self.host = host
         self.port = port
         self.doc_root = doc_root
-        self.workers_count = workers_count
+        self.cnt_threads = cnt_threads
+        self._socket = None
         self.queue = queue.Queue()
-        self.listen_socket = None
-        self.workers = []
-        self._stop_signal = threading.Event()
+        self.threads = []
+        self.timeout = 0.1
+        self._stopped = False
 
-    def run(self):
-        """Run thread"""
-        self._run_server()
+    def _bind_and_activate(self):
+        """Bind server and make pool threads"""
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._socket.bind((self.host, self.port))
+        self._socket.listen(1024)
+        logging.info("Serving HTTP on {0} port {1} (http://{0}:{1}/) ...".format(self.host, self.port))
+        self.threads = [TCPWorker(self.doc_root, self.queue, self.timeout, name="Thread {0}".format(i))
+                        for i in range(self.cnt_threads)]
+
+    def _start_threads(self):
+        """Start all threads"""
+        for th in self.threads:
+            th.start()
+            logging.info("Thread is started: {0}".format(th.name))
 
     def _run_server(self):
         """Run server"""
-        self.init_listen_socket()
-        self._run_workers()
-        self.listening_loop()
+        self._bind_and_activate()
+        self._start_threads()
 
     def stop_server(self):
-        """Stop Web server"""
-        self._stop_signal.set()
-        self.listen_socket.close()
-        for w in self.workers:
-            w.stop()
-            w.join()
+        """Stop server"""
+        for th in self.threads:
+            th.stop()
+            th.join()
+            logging.info("Thread is stopped: {0}".format(th.name))
+        self._stopped = True
+        self._socket.close()
+        logging.info("Serving HTTP is stopped")
 
-    def listening_loop(self):
-        """Listen loop"""
-        logging.info('Start listening loop.')
-        while not self._stop_signal.is_set():
-            connection, address = self.listen_socket.accept()
-            self.queue.put(connection)
-
-    def init_listen_socket(self):
-        """Init listening socket"""
-        ls = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        ls.bind((self.host, self.port))
-        ls.listen(4096)
-        self.listen_socket = ls
-        logging.info('Init listening socket.')
-
-    def _run_workers(self):
-        """Create and run workers"""
-        for i in range(self.workers_count):
-            w = Worker(self.queue, self.doc_root, name='WebServer worker#{}'.format(i))
-            w.start()
-            self.workers.append(w)
+    def serve_forever(self):
+        """Main loop - listen socket"""
+        self._run_server()
+        while not self._stopped:
+            conn, addr = self._socket.accept()
+            self.queue.put(conn, block=False)
 
 
-class Worker(threading.Thread):
-    # Queue.get timeout in seconds
-    Q_TIMEOUT = 5
-
-    def __init__(self, q, doc_root, **kwargs):
-        super().__init__(**kwargs)
-        self.queue = q
-        self._stop_event = threading.Event()
-        self.doc_root = doc_root
-
-    def process(self, connection):
-        """Process connection"""
-        rqst = request.create_request(connection)
-        handler = request.RequestHandler(self.doc_root, rqst)
-        response = handler.process()
-        data = response.get_data_response()
-        connection.sendall(data)
-        logging.info(self._log_message(rqst, response, len(data)))
-
-    def run(self):
-        """Main loop of worker"""
-        logging.info('{} started.'.format(self.name))
-        while not self._stop_event.is_set():
-            try:
-                c = self.queue.get(True, self.Q_TIMEOUT)
-                self.process(c)
-                c.close()
-            except queue.Empty:
-                # continue, no data
-                continue
-        logging.info('{} stop.'.format(self.name))
-
-    def stop(self):
-        """Set flag for stopping worker loop"""
-        self._stop_event.set()
-
-    @staticmethod
-    def _log_message(request, response, bytes_sent):
-        """Create log message"""
-        return '{} {} {}'.format(request.url, response.code, bytes_sent)
+def log_message(request, response, bytes_sent):
+    """Create log message"""
+    return '{} {} {}'.format(request.url, response.code, bytes_sent)
 
 
 if __name__ == '__main__':
@@ -117,12 +265,13 @@ if __name__ == '__main__':
     if not os.path.exists(args.doc_root):
         logging.error('Document root: {} does not exists.'.format(args.web_root))
 
-    httpd = HTTPd(args.host,
-                  args.port,
-                  os.path.realpath(args.doc_root),
-                  args.workers_count)
+    httpd = TCPServer(args.host,
+                      args.port,
+                      os.path.realpath(args.doc_root),
+                      args.workers_count)
 
     try:
-        httpd.start()
+        httpd.serve_forever()
     except KeyboardInterrupt:
-        httpd.stop_server()
+        pass
+    httpd.stop_server()
