@@ -36,57 +36,26 @@ CONTENT_TYPE = {
     'swf': 'application/x-shockwave-flash'
 }
 
+RECV_BUF = 1024
 
-class HTTPProtocol(object):
 
-    def __init__(self, data, doc_root):
-        self.data = data
-        self.allowed_method = {'HEAD', 'GET'}
+class HTTPResponse(object):
+
+    def __init__(self, **kwargs):
         self.version = "HTTP/1.1"
-        self.method = ""
-        self.url = ""
-        self.filename = ""
-        self.doc_root = doc_root
+        self.allowed_method = kwargs['allowed_method']
+        self.method = kwargs['method']
+        self.filename = kwargs['filename']
+        self.code = kwargs['code']
         self.headers = dict()
+        self.body = kwargs['body']
         self.response = None
-        self.code = OK
-        self.body = None
-
-    def _invalid_request(self, code, msg):
-        """Invalid request"""
-        self.code = code
-        self.body = str(msg)
-        self.headers = {'Content-Type': 'text/plain'}
 
     def _get_content_type(self):
         name, ext = os.path.splitext(self.filename)
         if ext:
             return CONTENT_TYPE.get(ext.strip('.'), CONTENT_TYPE['text'])
         return CONTENT_TYPE['text']
-
-    def _read_file(self):
-        """Reading file in binary mode"""
-        with open(self.filename, mode='rb') as fd:
-            return fd.read()
-
-    def _check(self):
-        """Check resource for access"""
-        file_path = unquote(self.url.split('?')[0].strip('/'))
-        filename = os.path.realpath(os.path.join(self.doc_root, file_path))
-        long_prefix = os.path.commonprefix([self.doc_root, filename])
-        # check root
-        if long_prefix != self.doc_root:
-            return FORBIDDEN
-        if os.path.isdir(filename):
-            # append index.html
-            filename = os.path.join(filename, "index.html")
-            error = FORBIDDEN
-        else:
-            error = NOT_FOUND
-        if not os.path.exists(filename):
-            return error
-        self.filename = filename
-        return OK
 
     def _write_data(self, string):
         """Function to write data into response"""
@@ -118,18 +87,57 @@ class HTTPProtocol(object):
         self.headers['Date'] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
         self.headers['Connection'] = 'close'
         self.headers['Server'] = 'Python Simple Web Server'
-        # headers
-        # for (header, content) in self.headers.items():
-        #     logging.debug("Sending header: '{0}: {1}'".format(header, content))
-        #     self._write_data('{}: {}\r\n'.format(header, content))
         headers = (self._write_data('{}: {}\r\n'.format(header, content))
                    for (header, content) in self.headers.items())
-        for el in headers:
+        for _ in headers:
             pass
         self._write_data('\r\n')
         # body
         if self.body is not None and self.method == "GET":
             self._write_data(self.body)
+
+
+class HTTPRequest(object):
+
+    def __init__(self, data, doc_root):
+        self.data = data
+        self.allowed_method = {'HEAD', 'GET'}
+        self.method = ""
+        self.url = ""
+        self.filename = ""
+        self.doc_root = doc_root
+        self.code = OK
+        self.body = None
+
+    def _read_file(self):
+        """Reading file in binary mode"""
+        with open(self.filename, mode='rb') as fd:
+            return fd.read()
+
+    def _invalid_request(self, code, msg):
+        """Invalid request"""
+        self.code = code
+        self.body = str(msg)
+        self.headers = {'Content-Type': 'text/plain'}
+
+    def _check(self):
+        """Check resource for access"""
+        file_path = unquote(self.url.split('?')[0].strip('/'))
+        filename = os.path.realpath(os.path.join(self.doc_root, file_path))
+        long_prefix = os.path.commonprefix([self.doc_root, filename])
+        # check root
+        if long_prefix != self.doc_root:
+            return FORBIDDEN
+        if os.path.isdir(filename):
+            # append index.html
+            filename = os.path.join(filename, "index.html")
+            error = FORBIDDEN
+        else:
+            error = NOT_FOUND
+        if not os.path.exists(filename):
+            return error
+        self.filename = filename
+        return OK
 
     def parse_data(self):
         logging.debug('Parsing headers')
@@ -156,6 +164,15 @@ class HTTPProtocol(object):
             return
         self.body = self._read_file()
 
+    def to_response(self):
+        resp = dict()
+        resp['allowed_method'] = self.allowed_method
+        resp['method'] = self.method
+        resp['filename'] = self.filename
+        resp['code'] = self.code
+        resp['body'] = self.body
+        return resp
+
 
 class TCPWorker(threading.Thread):
 
@@ -165,19 +182,28 @@ class TCPWorker(threading.Thread):
         self.queue = q
         self.timeout = q_timeout
         self._stopped = False
-        self.httpobj = None
+        self.httpreq = None
+        self.httpresp = None
 
     def _do_work(self, conn):
         """Processing: get request and send response"""
-        RECV_BUF = 1024
-        data = conn.recv(RECV_BUF).decode('utf-8')
+        data = ""
+        while 1:
+            buf = conn.recv(RECV_BUF)
+            if not buf:
+                break
+            data += buf.decode('utf-8')
+            if data.find("\r\n\r\n") > 0 or data.find("\n\n") > 0:
+                break
         if data:
-            self.httpobj = HTTPProtocol(data, self.doc_root)
-            self.httpobj.parse_data()
-            self.httpobj.write_response()
-            logging.info('{} {} {}'.format(self.httpobj.url, self.httpobj.code, len(self.httpobj.response)))
-            conn.sendall(self.httpobj.response)
-            self.httpobj = None
+            self.httpreq = HTTPRequest(data, self.doc_root)
+            self.httpreq.parse_data()
+            self.httpresp = HTTPResponse(**self.httpreq.to_response())
+            self.httpresp.write_response()
+            logging.info('{} {} {}'.format(self.httpreq.url, self.httpresp.code, len(self.httpresp.response)))
+            conn.sendall(self.httpresp.response)
+            self.httpreq = None
+            self.httpresp = None
 
     def run(self):
         """Main loop for thread, trying queue.get and _do_work"""
@@ -190,6 +216,10 @@ class TCPWorker(threading.Thread):
                 item.close()
                 self.queue.task_done()
             except queue.Empty:
+                continue
+            except socket.error:
+                self.queue.task_done()
+                # item.close()
                 continue
 
     def stop(self):
@@ -244,8 +274,15 @@ class TCPServer(object):
         """Main loop - listen socket"""
         self._run_server()
         while not self._stopped:
-            conn, addr = self._socket.accept()
-            self.queue.put(conn, block=False)
+            try:
+                self._socket.settimeout(0.2)  # timeout for listening
+                conn, addr = self._socket.accept()
+            except socket.timeout:
+                pass
+            except:
+                raise
+            else:
+                self.queue.put(conn, block=False)
 
 
 def log_message(request, response, bytes_sent):

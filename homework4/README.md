@@ -73,9 +73,8 @@ optional arguments:
 
 ```
 ab -n 50000 -c 100 -r -s 60 http://127.0.0.1:8080/
-```
-Нагрузочная тестирование иногда ломается, даже чаще чем полностью проходит
-```
+
+
 Benchmarking 127.0.0.1 (be patient)
 Completed 5000 requests
 Completed 10000 requests
@@ -127,7 +126,65 @@ Percentage of the requests served within a certain time (ms)
  100%  20575 (longest request)
 ```
 
-### Тестирование
+### Тестовый стенд (сервер запущен с 4 потокоми)
+
+```MacBook Pro (2,4 GHz Intel Core i5, 8 ГБ 1333 MHz DDR3)```
+
+```
+ab -n 50000 -c 100 -r -s 60 http://127.0.0.1:8080/ -w 4
+
+
+Benchmarking 127.0.0.1 (be patient)
+Completed 5000 requests
+Completed 10000 requests
+Completed 15000 requests
+Completed 20000 requests
+Completed 25000 requests
+Completed 30000 requests
+Completed 35000 requests
+Completed 40000 requests
+Completed 45000 requests
+Completed 50000 requests
+Finished 50000 requests
+
+Server Software:        Python
+Server Hostname:        127.0.0.1
+Server Port:            8080
+
+Document Path:          /
+Document Length:        138 bytes
+
+Concurrency Level:      100
+Time taken for tests:   104.851 seconds
+Complete requests:      50000
+Failed requests:        0
+Total transferred:      14750000 bytes
+HTML transferred:       6900000 bytes
+Requests per second:    476.87 [#/sec] (mean)
+Time per request:       209.703 [ms] (mean)
+Time per request:       2.097 [ms] (mean, across all concurrent requests)
+Transfer rate:          137.38 [Kbytes/sec] received
+
+Connection Times (ms)
+              min  mean[+/-sd] median   max
+Connect:        0   84 1239.9      0   19781
+Processing:     1   92  63.2     82     633
+Waiting:        0   92  63.0     81     633
+Total:          1  176 1237.0     82   19846
+
+Percentage of the requests served within a certain time (ms)
+  50%     82
+  66%     87
+  75%     91
+  80%     97
+  90%    113
+  95%    153
+  98%    391
+  99%    537
+ 100%  19846 (longest request)
+
+
+ ### Тестирование
 
 Тесты пришлось подкорректировать в связи с тем, что использую Python 3
 и методы socket.send, socket.sendall принимают данные только bytes,
