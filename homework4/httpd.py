@@ -60,15 +60,11 @@ class HTTPResponse(object):
     def _write_data(self, string):
         """Function to write data into response"""
         if isinstance(string, str):
-            if self.response is None:
-                self.response = string.encode('utf-8')
-            else:
-                self.response += string.encode('utf-8')
+            string = string.encode('utf-8')
+        if self.response is None:
+            self.response = string
         else:
-            if self.response is None:
-                self.response = string
-            else:
-                self.response += string
+            self.response += string
 
     def write_response(self):
         """Write the response back to the client """
@@ -87,10 +83,8 @@ class HTTPResponse(object):
         self.headers['Date'] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
         self.headers['Connection'] = 'close'
         self.headers['Server'] = 'Python Simple Web Server'
-        headers = (self._write_data('{}: {}\r\n'.format(header, content))
-                   for (header, content) in self.headers.items())
-        for _ in headers:
-            pass
+        for (header, content) in self.headers.items():
+            self._write_data('{}: {}\r\n'.format(header, content))
         self._write_data('\r\n')
         # body
         if self.body is not None and self.method == "GET":
@@ -182,13 +176,11 @@ class TCPWorker(threading.Thread):
         self.queue = q
         self.timeout = q_timeout
         self._stopped = False
-        self.httpreq = None
-        self.httpresp = None
 
     def _do_work(self, conn):
         """Processing: get request and send response"""
         data = ""
-        while 1:
+        while True:
             buf = conn.recv(RECV_BUF)
             if not buf:
                 break
@@ -196,30 +188,26 @@ class TCPWorker(threading.Thread):
             if data.find("\r\n\r\n") > 0 or data.find("\n\n") > 0:
                 break
         if data:
-            self.httpreq = HTTPRequest(data, self.doc_root)
-            self.httpreq.parse_data()
-            self.httpresp = HTTPResponse(**self.httpreq.to_response())
-            self.httpresp.write_response()
-            logging.info('{} {} {}'.format(self.httpreq.url, self.httpresp.code, len(self.httpresp.response)))
-            conn.sendall(self.httpresp.response)
-            self.httpreq = None
-            self.httpresp = None
+            httpreq = HTTPRequest(data, self.doc_root)
+            httpreq.parse_data()
+            httpresp = HTTPResponse(**httpreq.to_response())
+            httpresp.write_response()
+            logging.info('{} {} {}'.format(httpreq.url, httpresp.code, len(httpresp.response)))
+            conn.sendall(httpresp.response)
 
     def run(self):
         """Main loop for thread, trying queue.get and _do_work"""
         while not self._stopped:
             try:
-                item = self.queue.get(block=True, timeout=self.timeout)
-                # if item is None:
-                #     continue
-                self._do_work(item)
-                item.close()
+                connect = self.queue.get(block=True, timeout=self.timeout)
+                self._do_work(connect)
+                connect.close()
                 self.queue.task_done()
             except queue.Empty:
                 continue
             except socket.error:
+                connect.close()
                 self.queue.task_done()
-                # item.close()
                 continue
 
     def stop(self):
@@ -274,15 +262,9 @@ class TCPServer(object):
         """Main loop - listen socket"""
         self._run_server()
         while not self._stopped:
-            try:
-                self._socket.settimeout(0.2)  # timeout for listening
-                conn, addr = self._socket.accept()
-            except socket.timeout:
-                pass
-            except:
-                raise
-            else:
-                self.queue.put(conn, block=False)
+            # self._socket.settimeout(0.2)  # timeout for listening
+            conn, addr = self._socket.accept()
+            self.queue.put(conn, block=False)
 
 
 def log_message(request, response, bytes_sent):
