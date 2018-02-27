@@ -90,7 +90,6 @@ def insert_appsinstalled(memc, appsinstalled, dry_run=False):
                 time.sleep(delay)
                 cur_attempt += 1
                 result = memc.set(key, packed)
-                delay *= 2
             return result != 0
     except Exception as e:
         logging.exception("Cannot write to memc %s: %s" % (memc.servers[0], e))
@@ -203,7 +202,7 @@ if __name__ == '__main__':
     op.add_option("-t", "--test", action="store_true", default=False)
     op.add_option("-l", "--log", action="store", default=None)
     op.add_option("--dry", action="store_true", default=False)
-    op.add_option("--pattern", action="store", default="/appsinstalled/*.tsv.gz")
+    op.add_option("--pattern", action="store", default="./appsinstalled/*.tsv.gz")
     op.add_option("--idfa", action="store", default="127.0.0.1:33013")
     op.add_option("--gaid", action="store", default="127.0.0.1:33014")
     op.add_option("--adid", action="store", default="127.0.0.1:33015")
