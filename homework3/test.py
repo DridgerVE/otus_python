@@ -7,8 +7,6 @@ import api
 
 class MockMyRedis(object):
     """Mock-class для api.MyRedis"""
-    def __init__(self, max_count_attempt=0, timeout=0.01, *args, **kwargs):
-        super().__init__()
 
     def cache_get(self, name):
         return 0
@@ -34,6 +32,20 @@ def cases(cases):
     return decorator
 
 
+def make_score(arguments):
+    """Make score for compare with score from api"""
+    score = 0
+    if arguments.get('phone', 0):
+        score += 1.5
+    if arguments.get('email', 0):
+        score += 1.5
+    if arguments.get('birthday', 0) and arguments.get('gender', 0):
+        score += 1.5
+    if arguments.get('first_name', 0) and arguments.get('last_name', 0):
+        score += 0.5
+    return score
+
+
 def make_valid_auth(request):
     if request.get("login") == api.ADMIN_LOGIN:
         request["token"] = hashlib.sha512((datetime.datetime.now().strftime("%Y%m%d%H") + api.ADMIN_SALT).encode('utf-8')).hexdigest()
@@ -46,8 +58,8 @@ class TestSuite(unittest.TestCase):
     def setUp(self):
         self.context = {}
         self.headers = {}
-        # self.store = api.MyRedis(max_count_attempt=100, timeout=0.1)
-        self.store = MockMyRedis(max_count_attempt=10, timeout=0.1)
+        # self.store = api.MyRedis()
+        self.store = MockMyRedis()
 
     def get_response(self, request):
         return api.method_handler({"body": request, "headers": self.headers}, self.context, self.store)
@@ -102,10 +114,10 @@ class TestSuite(unittest.TestCase):
         {"phone": "79175002040", "email": "stupnikov@otus.ru"},
         {"phone": 79175002040, "email": "stupnikov@otus.ru"},
         {"gender": 1, "birthday": "01.01.2000", "first_name": "a", "last_name": "b"},
-        {"gender": 0, "birthday": "01.01.2000"},
-        {"gender": 1, "birthday": "01.01.2000"},
+        {"gender": 0, "birthday": "02.01.2000"},
+        {"gender": 1, "birthday": "03.01.2000"},
         {"first_name": "a", "last_name": "b"},
-        {"phone": "79175002040", "email": "stupnikov@otus.ru", "gender": 1, "birthday": "01.01.2000",
+        {"phone": "79175002040", "email": "stupnikov@otus.ru", "gender": 1, "birthday": "04.01.2000",
          "first_name": "a", "last_name": "b"},
     ])
     def test_ok_score_request(self, arguments):
@@ -114,6 +126,9 @@ class TestSuite(unittest.TestCase):
         response, code = self.get_response(request)
         self.assertEqual(api.OK, code, arguments)
         score = response.get("score")
+        # проверим score, вне зависимости от досупности redis
+        test_score = make_score(arguments)
+        self.assertEqual(test_score, score)
         self.assertTrue(isinstance(score, (int, float)) and score >= 0, arguments)
         self.assertEqual(sorted(self.context["has"]), sorted(arguments.keys()))
 
@@ -150,7 +165,11 @@ class TestSuite(unittest.TestCase):
         request = {"account": "horns&hoofs", "login": "h&f", "method": "clients_interests", "arguments": arguments}
         make_valid_auth(request)
         response, code = self.get_response(request)
-        self.assertEqual(api.OK, code, arguments)
+        # если redis недоступен, проверим соответствующий код возврата
+        test_code = api.OK
+        if not all(response.values()):
+            test_code = api.INTERNAL_ERROR
+        self.assertEqual(test_code, code, arguments)
         self.assertEqual(len(arguments["client_ids"]), len(response))
         self.assertEqual(self.context.get("nclients"), len(arguments["client_ids"]))
 

@@ -40,45 +40,50 @@ GENDERS = {
 }
 
 
-class MyRedis(redis.Redis):
+class MyRedis(redis.StrictRedis):
     """Обертка для redis"""
 
-    def __init__(self, max_count_attempt=0, timeout=0.1, *args, **kwargs):
-        """max_count_attempt - количество попыток переподключения (0 - пытаемся бесконечно)"""
-        super().__init__(*args, **kwargs)
-        self.max_count_attempt = max_count_attempt
-        self.timeout = timeout
+    def _init_retry(self):
+        self.max_count_attempt = 5
+        self.timeout = 0.1
         self.count_attempt = 0
+        self.lives = True
 
-    def cache_get(self, name):
+    def _retry(self):
+        if self.max_count_attempt >= self.count_attempt:
+            self.count_attempt += 1
+            time.sleep(self.timeout)
+            self.timeout *= 2
+            return
+        else:
+            self.lives = False
+            return
+
+    def get(self, name):
+        self._init_retry()
         while True:
             try:
                 r = super().get(name)
-                self.count_attempt = 0
                 break
             except redis.exceptions.ConnectionError:
-                if self.max_count_attempt == 0 or self.max_count_attempt >= self.count_attempt:
-                    self.count_attempt += 1
-                    time.sleep(self.timeout)
-                    continue
-                else:
-                    r = 0
-                    break
+                self._retry()
+                if not self.lives:
+                    return 0
         return r
 
+    def cache_get(self, name):
+        return self.get(name)
+
     def cache_set(self, name, value, ex=None, px=None, nx=False, xx=False):
+        self._init_retry()
         while True:
             try:
                 super().set(name, value, ex, px, nx, xx)
-                self.count_attempt = 0
-                break
+                return
             except redis.exceptions.ConnectionError:
-                if self.max_count_attempt == 0 or self.max_count_attempt >= self.count_attempt:
-                    self.count_attempt += 1
-                    time.sleep(self.timeout)
-                    continue
-                else:
-                    break
+                self._retry()
+                if not self.lives:
+                    return
 
 
 class Field(object, metaclass=ABCMeta):
@@ -253,6 +258,9 @@ class ClientsInterestsRequest(MainRequest):
         response = {}
         for client in self.client_ids:
             response[client] = get_interests(store, client)
+        # если хотя бы для одного client вернется [], то считаем, что redis недоступен
+        if not all(response.values()):
+            return response, INTERNAL_ERROR
         return response, OK
 
 
@@ -416,7 +424,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     router = {
         "method": method_handler
     }
-    store = MyRedis(max_count_attempt=10, timeout=0.01)
+    store = MyRedis()
 
     def get_request_id(self, headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)
