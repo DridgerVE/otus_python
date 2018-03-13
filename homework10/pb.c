@@ -227,6 +227,7 @@ static PyObject* py_deviceapps_xread_pb(PyObject* self, PyObject* args) {
         if (magic != MAGIC || type != DEVICE_APPS_TYPE) continue;
         msg = device_apps__unpack (NULL, length, buf); // Deserialize the serialized data
         if (msg == NULL){
+            Py_DECREF(result);
             gzclose(fd);
             PyErr_SetString(PyExc_ValueError, "Error: wrong protobuf msg");
             return NULL;
@@ -239,61 +240,110 @@ static PyObject* py_deviceapps_xread_pb(PyObject* self, PyObject* args) {
         PyObject *dev;
         dev = PyDict_New();
         if (device->has_id){
-            if (PyDict_SetItemString(dev, "id", PyString_FromStringAndSize((char*)device->id.data, device->id.len)) == -1){
+            PyObject *id;
+            id = PyString_FromStringAndSize((char*)device->id.data, device->id.len);
+            if (PyDict_SetItemString(dev, "id", id) == -1){
+                Py_DECREF(id);
+                Py_DECREF(result);
+                Py_DECREF(item);
+                Py_DECREF(dev);
                 gzclose(fd);
                 PyErr_SetString(PyExc_ValueError, "Error: can't create dict object");
                 return NULL;
             }
+            Py_DECREF(id);
         }
         if (device->has_type){
-            if (PyDict_SetItemString(dev, "type", PyString_FromStringAndSize((char*)device->type.data, device->type.len)) == -1){
+            PyObject *type;
+            type = PyString_FromStringAndSize((char*)device->type.data, device->type.len);
+            if (PyDict_SetItemString(dev, "type", type) == -1){
+                Py_DECREF(type);
+                Py_DECREF(result);
+                Py_DECREF(item);
+                Py_DECREF(dev);
                 gzclose(fd);
                 PyErr_SetString(PyExc_ValueError, "Error: can't create dict object");
                 return NULL;
             }
+            Py_DECREF(type);
         }
         if (PyDict_SetItemString(item, "device", dev) == -1) {
             gzclose(fd);
+            Py_DECREF(result);
+            Py_DECREF(item);
+            Py_DECREF(dev);
             PyErr_SetString(PyExc_ValueError, "Error: can't create dict object");
             return NULL;
         }
         // координаты, если есть
         if (msg->has_lat){
-            if (PyDict_SetItemString(item, "lat", PyFloat_FromDouble(msg->lat)) == -1) {
+            PyObject *lat;
+            lat = PyFloat_FromDouble(msg->lat);
+            if (PyDict_SetItemString(item, "lat", lat) == -1) {
+                Py_DECREF(lat);
+                Py_DECREF(result);
+                Py_DECREF(item);
+                Py_DECREF(dev);
                 gzclose(fd);
                 PyErr_SetString(PyExc_ValueError, "Error: can't create dict object");
                 return NULL;
             }
+            Py_DECREF(lat);
         }
         if (msg->has_lon){
-            if (PyDict_SetItemString(item, "lon", PyFloat_FromDouble(msg->lon)) == -1) {
+            PyObject *lon;
+            lon = PyFloat_FromDouble(msg->lon);
+            if (PyDict_SetItemString(item, "lon", lon) == -1) {
+                Py_DECREF(lon);
+                Py_DECREF(result);
+                Py_DECREF(item);
+                Py_DECREF(dev);
                 gzclose(fd);
                 PyErr_SetString(PyExc_ValueError, "Error: can't create dict object");
                 return NULL;
             }
+            Py_DECREF(lon);
         }
         // добавим список apps
         PyObject *apps;
         apps = PyList_New(0);
         int i = 0;
         while (i < msg->n_apps) {
-            if (PyList_Append(apps, PyInt_FromLong(msg->apps[i])) == -1){
+            PyObject *app;
+            app = PyInt_FromLong(msg->apps[i]);
+            if (PyList_Append(apps, app) == -1){
+                Py_DECREF(app);
+                Py_DECREF(result);
+                Py_DECREF(item);
+                Py_DECREF(dev);
+                Py_DECREF(apps);
                 gzclose(fd);
                 PyErr_SetString(PyExc_ValueError, "Error: can't create list object");
                 return NULL;
             }
+            Py_DECREF(app);
             i = i + 1;
         }
         if (PyDict_SetItemString(item, "apps", apps) == -1) {
             gzclose(fd);
+            Py_DECREF(result);
+            Py_DECREF(item);
+            Py_DECREF(dev);
+            Py_DECREF(apps);
             PyErr_SetString(PyExc_ValueError, "Error: can't create dict object");
             return NULL;
         }
+        Py_DECREF(apps);
         if (PyList_Append(result, item) == -1){
+            Py_DECREF(result);
+            Py_DECREF(item);
+            Py_DECREF(dev);
+            Py_DECREF(item);
             gzclose(fd);
             PyErr_SetString(PyExc_ValueError, "Error: can't create list object");
             return NULL;
         }
+        Py_DECREF(item);
         //cnt = cnt + 1;
     }
     gzclose(fd);
