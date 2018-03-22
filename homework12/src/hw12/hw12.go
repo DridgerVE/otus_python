@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/golang/protobuf/proto"
+	//"go.uber.org/zap"
 	"appsinstalled"
 	"fmt"
 )
@@ -24,12 +25,10 @@ const(
 	MEMCACHE_TIMEOUT = 1 * time.Second
 )
 
-type (
-	proto_msg struct {
+type proto_msg struct {
 		key   string
 		value []byte
 	}
-)
 
 var (
 	device_memc map[string] *string
@@ -37,8 +36,7 @@ var (
 	//logfile *string
 )
 
-func main()  {
-	var group sync.WaitGroup
+func init() {
 	device_memc = make(map[string] *string)
 	device_memc["idfa"] = flag.String("idfa", "127.0.0.1:33013", "memcache-0")
 	device_memc["gaid"] = flag.String("gaid", "127.0.0.1:33014", "memcache-1")
@@ -51,6 +49,10 @@ func main()  {
 	if *pattern == "" {
 		log.Fatal("Empty pattern files")
 	}
+}
+
+func main()  {
+	var wg sync.WaitGroup
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	files, e := filepath.Glob(*pattern)
 	if e != nil {
@@ -63,27 +65,17 @@ func main()  {
 		if strings.HasPrefix(name, "."){
 			continue
 		}
-		group.Add(1)
-		go process_handler(file, device_memc, &group)
+		wg.Add(1)
+		go process_handler(file, device_memc, &wg)
 	}
-	group.Wait()
-	for _, file := range files {
-		name := filepath.Base(file)
-		if !strings.HasPrefix(name, ".") {
-			dot_rename(file)
-			log.Println("Rename file:", file)
-		}
-	}
+	wg.Wait()
 }
 
 func process_handler(file string, device_memc map[string] *string, group *sync.WaitGroup){
-	var (
-		//line_processing sync.WaitGroup
-		insert_memc sync.WaitGroup
-		parse_line sync.WaitGroup
-		processed int
-		errors_cnt int
-	)
+	var wg1 sync.WaitGroup
+	var	wg2 sync.WaitGroup
+	var	processed int
+	var	errors_cnt int
 	defer group.Done()
 	log.Println("Processing file", file)
 	f, e := os.Open(file)
@@ -107,12 +99,11 @@ func process_handler(file string, device_memc map[string] *string, group *sync.W
 	for device_type, addr := range device_memc{
 		memcaches[device_type] = memcache.New(*addr)
 		memcaches[device_type].Timeout = MEMCACHE_TIMEOUT
-		//memcaches[device_type].MaxIdleConns = 100
-		insert_memc.Add(1)
+		wg1.Add(1)
 		proto_msgs[device_type] = make(chan *proto_msg)
-		go insert_appsinstalled(memcaches[device_type], proto_msgs[device_type], errors, &insert_memc)
-		parse_line.Add(1)
-		go parse_appsinstalled(lines, device_memc, proto_msgs, errors, &parse_line)
+		go insert_appsinstalled(memcaches[device_type], proto_msgs[device_type], errors, &wg1)
+		wg2.Add(1)
+		go parse_appsinstalled(lines, device_memc, proto_msgs, errors, &wg2)
 	}
 	scanner := bufio.NewScanner(fd)
 	for scanner.Scan() {
@@ -122,11 +113,11 @@ func process_handler(file string, device_memc map[string] *string, group *sync.W
 	}
 	close(lines)
 
-	parse_line.Wait()
+	wg2.Wait()
 	for _, msgs := range proto_msgs {
 		close(msgs)
 	}
-	insert_memc.Wait()
+	wg1.Wait()
 
 	close(errors)
 
@@ -142,6 +133,7 @@ func process_handler(file string, device_memc map[string] *string, group *sync.W
 			log.Printf("Processing: %d record, high error rate (%f > %f). Failed load: %s" ,processed, err_rate, NORMAL_ERR_RATE, file)
 		}
 	}
+	dot_rename(file)
 }
 
 func parse_appsinstalled(lines chan string, device_memc map[string] *string, msgs map[string](chan *proto_msg),
@@ -207,26 +199,22 @@ func parse_appsinstalled(lines chan string, device_memc map[string] *string, msg
 
 func insert_appsinstalled(memc *memcache.Client, msgs chan *proto_msg, errors chan int, insert_memc *sync.WaitGroup) {
 	defer insert_memc.Done()
+	var e error
 	err := 0
-	attempts := 5
 	delay := 0.2
-	cur_attempt := 1
+	attempts := 5
 	for msg := range msgs {
-		e := memc.Set(&memcache.Item{Key: msg.key, Value: msg.value})
+		cur_attempt := 1
 		for {
-			if e == nil || cur_attempt == attempts {
+			if e = memc.Set(&memcache.Item{Key: msg.key, Value: msg.value}); e == nil || cur_attempt == attempts {
 				break
 			}
 			time.Sleep(time.Second * time.Duration(delay))
 			cur_attempt++
-			e = memc.Set(&memcache.Item{Key: msg.key, Value: msg.value})
 		}
 		if e != nil {
 			log.Println("Memcache error: ", e)
 			err += 1
-		} else {
-			attempts = 5
-			cur_attempt = 1
 		}
 
 	}
@@ -234,5 +222,6 @@ func insert_appsinstalled(memc *memcache.Client, msgs chan *proto_msg, errors ch
 }
 
 func dot_rename(oldname string) error {
+	log.Println("Rename file:", oldname)
 	return os.Rename(oldname, filepath.Join(filepath.Dir(oldname),  "." + filepath.Base(oldname)))
 }
