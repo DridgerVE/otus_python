@@ -73,9 +73,9 @@ func main()  {
 
 func process_handler(file string, device_memc map[string] *string, group *sync.WaitGroup){
 	var wg1 sync.WaitGroup
-	var	wg2 sync.WaitGroup
-	var	processed int
-	var	errors_cnt int
+	var wg2 sync.WaitGroup
+	var processed int
+	var errors_cnt int
 	defer group.Done()
 	log.Println("Processing file", file)
 	f, e := os.Open(file)
